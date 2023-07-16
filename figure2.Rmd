@@ -1,0 +1,194 @@
+---
+title: "figure 2"
+author: "Pavitra Roychoudhury"
+date: "2023-07-16"
+output: html_document
+---
+
+Panels for Figure 2
+
+Import matrices
+```{r}
+rm(list=ls())
+library(Seurat)
+library(tidyverse)
+options(dplyr.width=Inf)
+library(cowplot); options(scipen = 999)
+
+all3<-readRDS('./seurat_analysis_all3.rds')
+
+```
+
+
+TSNE plot to show clusters
+```{r}
+pdf('./figures_for_ppr/tsne_umap_plot.pdf',width=5,height=5)
+DimPlot(all3, reduction = "umap",label=T)
+TSNEPlot(all3,label=T)
+dev.off()
+```
+
+Stacked bar blot indicating the % total cells that each dataset contributes to each cellular identity
+```{r}
+pdf('./figures_for_ppr/clusters_libs.pdf',width=5,height=3)
+plot_data3<-all3@meta.data
+plot_data3$lib<-factor(plot_data3$lib,
+                       levels = c('Inf1','Inf2','Uninf'), 
+                       labels = c('Inf-1','Inf-2','Uninf-1'))
+ggplot(plot_data3,aes(x=seurat_clusters,fill=lib))+
+  geom_bar(position = 'stack',stat='count',colour='black')+
+  scale_fill_manual(values=c('Uninf-1'='blue','Inf-1'='red','Inf-2'='red4'))+
+  theme_classic()+
+  theme(legend.position = c(0.8,0.8),
+        legend.title = element_blank())+
+  ylim(0,4000)+
+  xlab('Cluster')+ ylab('Number of cells')
+dev.off()
+```
+
+
+Cluster composition by cell identity from singleR
+```{r}
+df<-bind_rows(
+  read.csv('./all3_results/cells_with_readcounts_Inf1.csv',stringsAsFactors = F),
+  read.csv('./all3_results/cells_with_readcounts_Inf2.csv',stringsAsFactors = F),
+  read.csv('./all3_results/cells_with_readcounts_Uninf.csv',stringsAsFactors = F),
+)
+
+singleR_mousernaseq<-read.csv('./all3_results/singleR_results.csv',stringsAsFactors = F) %>% 
+  mutate(cellbarcode=str_split(X,'_',simplify = T)[,2])
+singleR_immgen<-read.csv('./all3_results/singleR_results_immgen.csv',stringsAsFactors = F)%>% 
+  mutate(cellbarcode=str_split(X,'_',simplify = T)[,2])
+
+df$cluster_label_singleR_pruned_mousernaseq<-singleR_mousernaseq$pruned.labels[match(df$cell_barcode,singleR_mousernaseq$cellbarcode)]
+df$cluster_label_singleR_pruned_immgen<-singleR_immgen$pruned.labels[match(df$cell_barcode,singleR_immgen$cellbarcode)]
+write_csv(df,'./all3_results/cells_with_readcounts_withsingleRpruning.csv')
+
+df$lib<-factor(df$lib,levels=c('Uninf','Inf1','Inf2'))
+
+
+library(Polychrome)
+library(ggpubr)
+# p16<-glasbey.colors(21)
+cols1<-c(
+  'Adipocytes'="dodgerblue2",
+  'Astrocytes'="#E31A1C",
+  'B cells'="green4",
+  'Cardiomyocytes'="#6A3D9A",
+  'Dendritic cells'="#fba81b",
+  'Endothelial cells'="black",
+  'Epithelial cells'="gold1",
+  'Erythrocytes'="blue1",
+  'Fibroblasts'="#FB9A99",
+  'Granulocytes'="darkturquoise",
+  'Macrophages'="#CAB2D6",
+  'Microglia'="yellow4",
+  'Monocytes'="steelblue4",
+  'Neurons'="khaki2",
+  'NK cells'="maroon",
+  'Oligodendrocytes'="#705a44",
+  'T cells'="deeppink1",
+  'NA'='grey')
+
+cols2<-c(
+  'B cells'="green4",
+  'B cells,pro'="green3",
+  'Basophils'="dodgerblue2",
+  'DC'="#fba81b",
+  'Endothelial cells'="black",
+  'Eosinophils'="green",
+  'Epithelial cells'="gold1",
+  'Fibroblasts'="#FB9A99",
+  'ILC'="purple3",
+  'Macrophages'="#CAB2D6",
+  'Microglia'="yellow4",
+  'Monocytes'="steelblue4",
+  'Neutrophils'="darkturquoise",
+  'NK cells'="maroon",
+  'NKT'="orchid1",
+  'Stem cells'="blue1",
+  'Stromal cells'="#E31A1C",
+  'T cells'="deeppink1",
+  'Tgd'="deeppink4",
+  'NA'='grey')
+
+p1<-ggplot(df,aes(x=as.factor(seurat_clusters),fill=cluster_label_singleR_pruned_mousernaseq))+
+  geom_bar(position = 'stack',stat='count',colour='black')+
+  scale_fill_manual(values = cols1)+
+  theme_classic()+
+  guides(fill=guide_legend(ncol=3))+
+  theme(legend.position = c(0.63,0.75),
+        legend.title = element_blank(),
+        panel.background = element_rect(fill='transparent'))+
+  xlab('')+ ylab('Number of cells')
+
+p2<-ggplot(df,aes(x=as.factor(seurat_clusters)))+
+  geom_bar(position = 'fill',stat='count',colour='black',
+           aes(fill=cluster_label_singleR_pruned_mousernaseq))+
+  geom_text(data=labels1,aes(x=as.factor(seurat_clusters),
+                              label=paste0(round(max_perc,0),'%')),y=1,size=3,
+             angle=0,hjust=0.5,vjust=-0.5)+
+  scale_fill_manual(values = cols1)+
+  theme_classic()+
+  guides(fill=guide_legend(ncol=3))+
+  theme(legend.position = 'off',
+        legend.title = element_blank(),
+        panel.background = element_rect(fill='transparent'),
+        plot.background =element_rect(fill='transparent'))+
+  xlab('Cluster')+ ylab('Proportion of cells')
+
+p3<-ggplot(df,aes(x=as.factor(seurat_clusters),fill=cluster_label_singleR_pruned_immgen))+
+  geom_bar(position = 'stack',stat='count',colour='black')+
+  scale_fill_manual(values = cols2)+
+  theme_classic()+
+  guides(fill=guide_legend(ncol=3))+
+  theme(legend.position = c(0.63,0.7),
+        legend.title = element_blank())+
+  xlab('')+ ylab('')
+p4<-ggplot(df,aes(x=as.factor(seurat_clusters)))+
+  geom_bar(position = 'fill',stat='count',colour='black',
+           aes(fill=cluster_label_singleR_pruned_immgen))+
+  geom_text(data=labels2,aes(x=as.factor(seurat_clusters),
+                              label=paste0(round(max_perc,0),'%')),y=1,size=3,
+             angle=0,hjust=0.5,vjust=-0.5)+
+  scale_fill_manual(values = cols2)+
+  theme_classic()+
+  guides(fill=guide_legend(ncol=3))+
+  theme(legend.position = 'off',
+        legend.title = element_blank())+
+  xlab('Cluster')+ ylab('')
+
+#just the legend, if needed as its own panel
+# p3<-ggplot(df,aes(x=as.factor(seurat_clusters),fill=cluster_label_singleR_pruned_mousernaseq))+
+#   geom_bar(position = 'stack',stat='count',colour='black')+
+#   scale_fill_manual(values = cols1)+
+#   theme_classic()+
+#   guides(fill=guide_legend(ncol=3))+
+#   theme(legend.position = 'right',
+#         legend.title = element_blank())
+# leg <- get_legend(p3)
+# as_ggplot(leg)
+
+pdf('./figures_for_ppr/FigA.pdf',width=11.5,height=7)
+plot_grid(p1,p3,p2,p4,nrow = 2)
+dev.off()
+
+```
+
+
+Selected cell type markers
+```{r}
+library(readxl)
+library(reshape)
+options(dplyr.width=Inf)
+
+selectedcellmarkers<-read_excel('./cell type markers2-PR.xlsx')
+
+pdf('./figures_for_ppr/Selected_markers3.pdf',width=10,height=5)
+DotPlot(all3, features = selectedcellmarkers$gene) + 
+  RotatedAxis()+
+  ylab('Cluster')+xlab('')+
+  scale_x_discrete(breaks=selectedcellmarkers$gene,labels=selectedcellmarkers$gene_label)
+dev.off()
+```
+

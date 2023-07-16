@@ -1,0 +1,95 @@
+---
+title: "Figure 3"
+author: "Pavitra Roychoudhury"
+date: "2023-07-16"
+output: html_document
+---
+
+panels for figure 3
+```{r}
+rm(list=ls())
+library(Seurat)
+library(tidyverse)
+options(dplyr.width=Inf)
+library(cowplot); options(scipen = 999)
+
+all3<-readRDS('./seurat_analysis_all3.rds')
+```
+
+```{r}
+pdf('./figures_for_ppr/FigZ-1.pdf',width = 11,height=2.5)
+VlnPlot(all3, features ='percent.mt', split.by = 'lib')+
+  xlab('')+ylab('% mitochondrial reads')+
+  scale_fill_manual(values=c('Uninf'='blue','Inf1'='red','Inf2'='red4'),
+                    labels=c('Uninf'='Uninf-1','Inf1'='Inf-1','Inf2'='Inf-2'))+
+  theme_classic()+
+  theme(legend.position = 'none',
+        legend.title = element_blank(),
+        plot.title = element_blank())
+dev.off()
+pdf('./figures_for_ppr/FigZ-2.pdf',width = 11,height=2.5)
+VlnPlot(all3, features ='nFeature_RNA', split.by = 'lib')+
+  xlab('')+ylab('Obs genes per cell')+
+  scale_fill_manual(values=c('Uninf'='blue','Inf1'='red','Inf2'='red4'),
+                    labels=c('Uninf'='Uninf-1','Inf1'='Inf-1','Inf2'='Inf-2'))+
+  theme_classic()+ylim(0,10000)+
+  theme(legend.position = 'none',
+        legend.title = element_blank(),
+        plot.title = element_blank())
+dev.off()
+```
+
+```{r}
+rm(list=ls())
+library(readxl)
+library(reshape)
+options(dplyr.width=Inf)
+
+
+db_apoptosis<-read_excel('./Deathbase_apoptosis_necroptosis.xlsx',sheet = 'apoptosis')
+db_necroptosis<-read_excel('./Deathbase_apoptosis_necroptosis.xlsx',sheet = 'necroptosis')
+
+TSNEPlot(all3,label=T); #for reference
+
+#match feature names 
+allfeatures<-data.frame(origname=unique(rownames(all3))) %>% 
+  mutate(featurename=toupper(str_split(origname,'--',simplify = T)[,2]))
+features_interest<-allfeatures$origname[
+  allfeatures$featurename%in%db_apoptosis$ID|                                                      allfeatures$featurename%in%db_necroptosis$ID]; #40 total
+
+expr <- FetchData(object = all3, vars = features_interest,slot = 'data')
+expr$cellname<-row.names(expr) 
+expr$seurat_cluster<-all3@meta.data$seurat_clusters[match(expr$cellname,row.names(all3@meta.data))]
+expr$lib<-all3@meta.data$lib[match(expr$cellname,row.names(all3@meta.data))]
+
+expr2<-melt(expr,id.vars = c('cellname','seurat_cluster','lib'),variable_name = 'gene')
+
+expr3<-expr2 %>% 
+  group_by(seurat_cluster,lib) %>% 
+  summarize(n_expressing_over0=length(unique(cellname[value>0])),
+            perc_exprover0=n_expressing_over0/length(unique(cellname))*100) %>% 
+  write_csv('./all3_results/Apoptosis_markers_summcounts.csv')
+
+expr4<-expr2 %>% 
+  group_by(seurat_cluster,lib,gene) %>% 
+  summarize(n_expressing_over0=length(unique(cellname[value>0])),
+            mean_expr=mean(value),
+            sd_expr=sd(value)) %>% 
+  write_csv('./all3_results/Apoptosis_markers_stats.csv')
+
+#Figure for paper: for cells expressing apoptosis markers on the list (value>0), expression level boxplot by library and cluster
+pdf('./figures_for_ppr/Apoptosis_boxplot.pdf',width = 11,height=3)
+ggplot(expr2 %>% filter(value>0),aes(x=seurat_cluster,y=value))+
+  geom_boxplot(aes(fill=lib))+
+  scale_fill_manual(values=c('Uninf'='blue','Inf1'='red','Inf2'='red4'),
+                    labels=c('Uninf'='Uninf-1','Inf1'='Inf-1','Inf2'='Inf-2'))+
+  xlab('Cluster')+ylab('Expression level')+
+  theme_classic()+
+  theme(legend.position = 'top',
+        legend.title = element_blank(),
+        plot.title = element_blank(),
+        legend.direction = 'horizontal')
+dev.off()
+```
+
+

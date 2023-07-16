@@ -1,0 +1,301 @@
+---
+title: "Reanalysis of Wang et al"
+author: "Pavitra Roychoudhury"
+date: "2023-07-11"
+output: html_document
+---
+
+Scripts for reanalysis of Wang et al matrices including import, QC, filtering, PCA, TSNE, clustering, and differential expression.
+
+Matrices were dowloaded from GEO and saved in the following folders:
+- ./GSE225839_RAW/GSM7057456_Uninfected
+- ./GSE225839_RAW/GSM7057457_Infected
+- ./GSE225839_RAW/GSM7057458_Infected-2
+
+Analysis results were output to the folder ./all3_results
+
+## Import data
+```{r}
+rm(list=ls())
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+
+
+#Import Wang matrices
+indata<-Read10X('./GSE225839_RAW/GSM7057456_Uninfected/')
+uninf <- CreateSeuratObject(counts = indata);
+uninf
+
+indata<-Read10X('./GSE225839_RAW/GSM7057457_Infected/')
+inf1 <- CreateSeuratObject(counts = indata);
+inf1
+
+indata<-Read10X('./GSE225839_RAW/GSM7057458_Infected-2/')
+inf2 <- CreateSeuratObject(counts = indata);
+inf2
+
+all3<-merge(uninf, y = c(inf1, inf2), add.cell.ids = c("Uninf", "Inf1", "Inf2"), project = "ghiasi")
+all3
+all3@meta.data$lib<-str_split(rownames(all3@meta.data),'_',simplify = T)[,1]
+
+all3@meta.data %>% group_by(lib) %>% 
+  summarize(n_cells=n(),
+            min_feature=min(nFeature_RNA),
+            max_feature=max(nFeature_RNA),
+            median_feature=median(nFeature_RNA),
+            mean_feature=mean(nFeature_RNA),
+            min_rna=min(nCount_RNA),
+            max_rna=max(nCount_RNA),
+            median_rna=median(nCount_RNA),
+            mean_rna=mean(nCount_RNA)) %>% 
+  write_csv('./all3_results/prefilter_counts.csv')
+```
+
+## QC
+```{r}
+all3[["percent.mt"]] <- PercentageFeatureSet(all3, pattern = "MT-|mt-")
+
+pdf('./all3_results/mt.pdf',width = 8,height=5)
+VlnPlot(all3, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,group.by = 'lib')
+plot1 <- FeatureScatter(all3, feature1 = "nCount_RNA", feature2 = "percent.mt",group.by = 'lib')
+plot2 <- FeatureScatter(all3, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",group.by = 'lib')
+plot1 + plot2
+dev.off()
+```
+
+
+## Filter
+Filter out cells that have mt reads > 15% and too few or too many features
+```{r}
+all3_prefilter<-all3
+all3<-subset(
+  all3,
+  percent.mt < 15 & nFeature_RNA > 300 & nFeature_RNA < 9000 
+) 
+
+pdf('./all3_results/mt-afterfilter.pdf',width = 8,height=5)
+VlnPlot(all3, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,group.by = 'lib')
+plot1 <- FeatureScatter(all3, feature1 = "nCount_RNA", feature2 = "percent.mt",group.by = 'lib')
+plot2 <- FeatureScatter(all3, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",group.by = 'lib')
+plot1 + plot2
+dev.off()
+
+nrow(all3@meta.data)
+
+all3@meta.data %>% group_by(lib) %>% 
+  summarize(n_cells=n(),
+            min_feature=min(nFeature_RNA),
+            max_feature=max(nFeature_RNA),
+            median_feature=median(nFeature_RNA),
+            mean_feature=mean(nFeature_RNA),
+            min_rna=min(nCount_RNA),
+            max_rna=max(nCount_RNA),
+            median_rna=median(nCount_RNA),
+            mean_rna=mean(nCount_RNA)) %>% 
+  write_csv('./all3_results/postfilter_counts.csv')
+
+saveRDS(all3_prefilter, file = "./seurat_analysis_all3_prefilter.rds")
+```
+
+
+## Normalization
+```{r}
+all3 <- NormalizeData(all3)
+```
+
+## Detection of variable genes across the single cells
+```{r}
+all3 <- FindVariableFeatures(all3, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(all3), 10)
+```
+    
+## Scaling the data and removing unwanted sources of variation
+```{r}
+all.genes <- rownames(all3)
+all3 <- ScaleData(all3, features = all.genes)
+```
+
+##Perform linear dimensional reduction
+Perform PCA on the scaled data
+```{r}
+all3 <- RunPCA(all3, features = VariableFeatures(object = all3))
+```
+
+##Determine statistically significant principal components
+```{r}
+pdf('./all3_results/elbow.pdf',width=6,height=4)
+ElbowPlot(all3)
+dev.off()
+
+#pick 20 PCs to continue to match with paper
+```
+
+##Cluster the cells
+```{r}
+all3 <- FindNeighbors(all3, dims = 1:20)
+all3 <- FindClusters(all3, resolution = 0.1)
+head(Idents(all3), 5)
+```
+
+
+##Run Non-linear dimensional reduction (tSNE)
+```{r}
+library(RColorBrewer)
+all3 <- RunUMAP(all3, dims = 1:20)
+all3 <- RunTSNE(all3, dims= 1:20)
+
+pdf('./all3_results/umap_plot.pdf',width=5,height=5)
+DimPlot(all3, reduction = "umap",label=T)
+FeaturePlot(all3, features = 'HSV-1-LAT')
+FeaturePlot(all3, features = 'percent.mt')
+TSNEPlot(all3,label=T)
+FeaturePlot(all3, features = 'HSV-1-LAT',reduction = 'tsne')
+FeaturePlot(all3, features = 'percent.mt',reduction = 'tsne')
+dev.off()
+
+pdf('./all3_results/umap_plot_split.pdf',width=15,height=5)
+DimPlot(all3, reduction = "umap",split.by = 'lib')
+FeaturePlot(all3, features = 'HSV-1-LAT',split.by = 'lib',reduction = 'umap')
+DimPlot(all3, reduction = "tsne",split.by = 'lib')
+FeaturePlot(all3, features = 'HSV-1-LAT',split.by = 'lib',reduction = 'tsne',
+            cols = c("lightgrey", "darkgreen"))
+dev.off()
+```
+
+##Finding differentially expressed genes (cluster biomarkers)
+```{r}
+all3.markers <- FindAllMarkers(all3, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25) 
+all3.markers$gene_label<-gsub('mm10--','',all3.markers$gene)
+write.csv(all3.markers,'./all3_results/AllMarkers.csv',row.names=F)
+
+#Top 10 markers for each cluster
+top50percluster_markers<-all3.markers %>% group_by(cluster) %>% top_n(50, avg_log2FC) 
+write.csv(top50percluster_markers,'./all3_results/Top50percluster.csv',row.names=F);
+```
+
+
+##Cluster annotation using SingleR
+```{r}
+library(SingleR)
+library(SingleCellExperiment)
+library(celldex)
+library(Polychrome)
+library(viridis)
+library(pheatmap)
+options(dplyr.width=Inf)
+mouseref <- MouseRNAseqData()
+# mouseref<-ImmGenData()
+all3<-readRDS('./seurat_analysis_all3_ghiasimatrices.rds')
+all3_counts<-as.SingleCellExperiment(all3)
+rownames(all3_counts)<-gsub('mm10--','',rownames(all3_counts))
+pred.all3<-SingleR(test=all3_counts,ref=mouseref,labels=mouseref$label.main);
+all3$cluster_label_singleR<-pred.all3$labels[match(row.names(all3@meta.data),row.names(pred.all3))]
+write.csv(pred.all3,'./all3_results/singleR_results.csv')
+# write.csv(pred.all3,'./all3_results/singleR_results_immgen.csv') #if running with Immgen reference
+
+plotScoreDistribution(pred.all3)
+plotScoreHeatmap(pred.all3)
+plotDeltaDistribution(pred.all3)
+summary(pruneScores(pred.all3))
+
+pruneScores(pred.all3)
+all3$cluster_label_singleR_pruned<-pred.all3$pruned.labels[match(row.names(all3@meta.data),row.names(pred.all3))]
+
+saveRDS(all3, file = "./seurat_analysis_all3.rds")
+```
+
+
+#Match with mapped reads
+reads were mapped using minimap within geneious, with MCKrae reference OL638991
+LAT coordinates from annotation on this reference:  7,493 -> 1, 118,926 -> 127,111
+Ran with the all3 object before and after mt filtering step, but figures (next chunk) only for the post-filter
+```{r}
+library(Rsamtools);
+library(Biostrings);
+library(tidyverse);
+library(parallel)
+ncores=detectCores()
+lat_pos<-c(1:7493,118926:127111)
+df_full<-cbind(all3@meta.data,
+          as.data.frame(Embeddings(all3[["umap"]])),
+          as.data.frame(Embeddings(all3[["tsne"]])));
+
+
+for(library in c('Inf1','Inf2','Uninf')){
+  print(library)
+  if(library == 'Inf1'){
+    all_r1s<-c(readDNAStringSet('./filtered_reads/SRR23588329_R1_matched_paired.fasta'),
+               readDNAStringSet('./filtered_reads/SRR23588330_R1_matched_paired.fasta'))
+    reads_names<-gsub(' ','_',str_split(names(all_r1s),' length',simplify = T)[,1])
+    bamfname<-'./mapped_reads/Inf1.bam'
+  } else if(library == 'Inf2'){
+    all_r1s<-c(readDNAStringSet('./filtered_reads/SRR23588327_R1_matched_paired.fasta'),
+               readDNAStringSet('./filtered_reads/SRR23588328_R1_matched_paired.fasta'))
+    reads_names<-gsub(' ','_',str_split(names(all_r1s),' length',simplify = T)[,1])
+    bamfname<-'./mapped_reads/inf2.bam'
+  } else if(library=='Uninf'){
+    all_r1s<-c(readDNAStringSet('./filtered_reads/SRR23588331_R1_matched_paired.fasta'),
+               readDNAStringSet('./filtered_reads/SRR23588332_R1_matched_paired.fasta'))
+    reads_names<-gsub(' ','_',str_split(names(all_r1s),' length',simplify = T)[,1])
+    bamfname<-'./mapped_reads/Uninf.bam'
+  }
+  df<-df_full %>% filter(lib==library)
+  df$cell_barcode<-str_split(row.names(df),'_',simplify = T)[,2]
+  df$barcode2<-str_split(df$cell_barcode,'-',simplify = T)[,1]
+  
+  baifname<-indexBam(bamfname);
+  params<-ScanBamParam(flag=scanBamFlag(isUnmappedQuery=FALSE),
+                       what=c('qname','rname','strand','pos','qwidth','mapq','cigar','seq'));
+  aln<-scanBam(bamfname,baifname,param=params)
+  aln_names<-aln[[1]]$qname
+  
+  #Find corresponding R1 to the reads in the bam
+  matched_r1s<-all_r1s[match(aln_names,reads_names)];
+  matched_r1s
+  
+  #Extract barcodes
+  matched_reads_barcodes<-as.character(substr(matched_r1s,1,16));
+  matched_reads_umis<-as.character(substr(matched_r1s,17,26));
+  
+  #Now match them to the cells in seurat analysis
+  df$HSV_reads<-unlist(mclapply(df$barcode2,function(x)
+    sum(matched_reads_barcodes==x),mc.cores = ncores))
+  inds<-which(df$HSV_reads>0)
+  df[,c('HSV_UMIs','LAT_reads','LAT_UMIs')]<-0;
+  df$HSV_UMIs[inds]<-unlist(mclapply(df$barcode2[inds],function(x)
+    length(unique(matched_reads_umis[matched_reads_barcodes==x])),mc.cores = ncores))
+  df$LAT_reads[inds]<-unlist(mclapply(df$barcode2[inds],function(x)
+    sum(matched_reads_barcodes==x&aln[[1]]$pos%in%lat_pos),mc.cores = ncores));
+  df$LAT_UMIs[inds]<-unlist(mclapply(df$barcode2[inds],function(x)
+    length(unique(matched_reads_umis[matched_reads_barcodes==x&aln[[1]]$pos%in%lat_pos])),mc.cores = ncores));
+  
+  length(all_r1s) #total filtered reads that had kmer matching HSV
+  length(matched_r1s) #total R1s where R2 had kmer match AND mapped to HSV
+  length(aln[[1]]$qname) #should be equal to above
+  nrow(df) #total number of cells in seurat analysis after filtering
+  sum(df$barcode2%in%matched_reads_barcodes)
+ 
+  write_csv(df,paste0('./all3_results/cells_with_readcounts_',library,'.csv'))
+
+}
+rm(library,df,inds)
+```
+
+Combine cell identity with HSV counts
+```{r}
+df<-bind_rows(
+  read.csv('./all3_results/cells_with_readcounts_Inf1.csv',stringsAsFactors = F),
+  read.csv('./all3_results/cells_with_readcounts_Inf2.csv',stringsAsFactors = F),
+  read.csv('./all3_results/cells_with_readcounts_Uninf.csv',stringsAsFactors = F),
+)
+
+singleR_mousernaseq<-read.csv('./all3_results/singleR_results.csv',stringsAsFactors = F) %>% 
+  mutate(cellbarcode=str_split(X,'_',simplify = T)[,2])
+singleR_immgen<-read.csv('./all3_results/singleR_results_immgen.csv',stringsAsFactors = F)%>% 
+  mutate(cellbarcode=str_split(X,'_',simplify = T)[,2])
+
+df$cluster_label_singleR_pruned_mousernaseq<-singleR_mousernaseq$pruned.labels[match(df$cell_barcode,singleR_mousernaseq$cellbarcode)]
+df$cluster_label_singleR_pruned_immgen<-singleR_immgen$pruned.labels[match(df$cell_barcode,singleR_immgen$cellbarcode)]
+write_csv(df,'./all3_results/cells_with_readcounts_withsingleRpruning.csv')
+```

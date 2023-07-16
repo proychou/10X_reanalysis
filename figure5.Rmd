@@ -1,0 +1,88 @@
+---
+title: "figure 5"
+author: "Pavitra Roychoudhury"
+date: "2023-07-16"
+output: html_document
+---
+
+Panels for figure 5
+```{r}
+rm(list=ls())
+library(Seurat)
+library(tidyverse)
+options(dplyr.width=Inf)
+library(cowplot); options(scipen = 999)
+
+all3<-readRDS('./seurat_analysis_all3.rds')
+```
+
+TSNE showing LAT expression
+```{r}
+pdf('./all3_results/tsne_plot_split.pdf',width=15,height=5)
+DimPlot(all3, reduction = "tsne",split.by = 'lib')
+FeaturePlot(all3, features = 'HSV-1-LAT',split.by = 'lib',reduction = 'tsne',
+cols = c("lightgrey", "darkgreen"))
+dev.off()
+```
+
+violin plot of LAT expression
+```{r}
+pdf('./figures_for_ppr/Lat_expression_violin.pdf',width = 11,height=2.5)
+VlnPlot(all3, features ='HSV-1-LAT', split.by = 'lib')+
+  xlab('')+ylab('LAT expression')+
+  scale_fill_manual(values=c('Uninf'='blue','Inf1'='red','Inf2'='red4'),
+                    labels=c('Uninf'='Uninf-1','Inf1'='Inf-1','Inf2'='Inf-2'))+
+  theme_classic()+
+  theme(legend.position = c(0.5,0.85),
+        legend.title = element_blank(),
+        plot.title = element_blank(),
+        legend.direction = 'horizontal')
+dev.off()
+```
+
+
+pre-post filter counts for selected genes: figure 5 bottom panels are a subset of figure S1 which is the full set generated in this chunk
+```{r}
+library(Seurat)
+library(tidyverse)
+library(readxl)
+library(reshape)
+library(ggthemes)
+options(dplyr.width=Inf)
+
+all3_prefilter<-readRDS('./seurat_analysis_all3_prefilter.rds')
+selectedcellmarkers<-read_excel('./cell type markers2-PR.xlsx')
+
+df_post<-FetchData(all3,vars = c(selectedcellmarkers$gene,'ident','lib','HSV-1-LAT'),slot = 'counts') %>% 
+    mutate(cellname=row.names(.)) %>% 
+    melt(id.vars = c('cellname','ident','lib'),variable_name = 'gene') %>% 
+    mutate(gp='post-filter')
+df_pre<-FetchData(all3_prefilter,vars = c(selectedcellmarkers$gene,'ident','lib','HSV-1-LAT'),slot = 'counts') %>% 
+    mutate(cellname=row.names(.)) %>% 
+    melt(id.vars = c('cellname','ident','lib'),variable_name = 'gene') %>% 
+    mutate(gp='pre-filter')
+
+
+df<-bind_rows(df_post, df_pre, df_raw) %>% 
+  left_join(selectedcellmarkers,by='gene')
+df$gp<-factor(df$gp,levels=c('pre-filter','post-filter'))
+
+
+plot_data<-df %>% 
+  group_by(lib,gp,gene,`Cell type`,gene_label) %>% 
+  summarize(reads=sum(value))
+plot_data$lib<-factor(plot_data$lib,levels = c('Uninf','Inf1','Inf2'),labels=c('Uninf-1','Inf-1','Inf-2'))
+
+pdf('./figures_for_ppr/pre-post-filter_counts_genes.pdf',width=7,height=10)
+ggplot(plot_data,aes(x=lib,y=reads,group=gp))+
+  geom_bar(stat = 'identity',aes(fill=gp),position='dodge')+
+  theme_clean()+
+  facet_wrap(`Cell type`~gene,scales = 'free',ncol=3)+
+  theme(legend.position =c(0.5,0.05),
+        legend.title = element_blank())
+dev.off()
+
+
+```
+```
+
